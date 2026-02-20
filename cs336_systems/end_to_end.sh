@@ -1,16 +1,15 @@
 uv run python end_to_end_benchmarking.py \
-    --device mps \
-    --dtype float32 \
-    --size small \
-    --d_model 768 \
-    --d_ff 3072 \
-    --num_layers 12 \
-    --num_heads 12 \
-    --batch 32 \
+    --device cuda \
+    --dtype float16 \
+    --d_model 2560 \
+    --d_ff 10240 \
+    --num_layers 32 \
+    --num_heads 32 \
+    --batch 1 \
     --vocab_size 10000 \
     --context_length 256 \
     --rope_theta 10000 \
-    --warmup_steps 500 \
-    --pass_type forward \
-    --test_steps 100 \
+    --warmup_steps 5 \
+    --pass_type both \
+    --test_steps 10 \
     --dataset ./random.bin
