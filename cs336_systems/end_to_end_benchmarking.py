@@ -28,9 +28,45 @@ def main():
     batch_size = 4
     context_length = 256
     vocab_size = 10000
-    rope_theta = rope_theta
+    rope_theta = 10000
 
-    model = BasicsTransformerLM(vocab_size=vocab_size, context_length=context_length, d_model=args.d_model, num_layers=args.num_layers, num_heads=args.num_heads, d_ff=args.d_ff, rope_theta=rope_theta).to(args.device, args.dtype)
+    if args.size == "small":
+      d_model=768
+      d_ff=3072
+      num_layers=12
+      num_heads=12
+    elif args.size == "medium":
+      d_model=1024
+      d_ff=4096
+      num_layers=24
+      num_heads=16
+    elif args.size == "large":
+      d_model=1290
+      d_ff=5120
+      num_layers=36
+      num_heads=20
+    elif args.size == "xl":
+      d_model=1600
+      d_ff=6400
+      num_layers=48
+      num_heads=25
+    elif args.size == "2.7B":
+      d_model=2560
+      d_ff=6400
+      num_layers=32
+      num_heads=32
+    else:
+      d_model=args.d_model
+      d_ff=args.d_ff
+      num_layers=args.num_layers
+      num_heads=args.num_heads
+    
+
+    if args.dtype == "float16":
+      model = BasicsTransformerLM(vocab_size=vocab_size, context_length=context_length, d_model=d_model, num_layers=num_layers, num_heads=num_heads, d_ff=d_ff, rope_theta=rope_theta).to(args.device, torch.float16)
+    elif args.dtype == "float32":
+      model = BasicsTransformerLM(vocab_size=vocab_size, context_length=context_length, d_model=d_model, num_layers=num_layers, num_heads=num_heads, d_ff=d_ff, rope_theta=rope_theta).to(args.device, torch.float32)
+
     optim = AdamW(params=model.parameters(), lr=1.0, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
 
     time_list = []
@@ -64,7 +100,7 @@ def main():
                 duration = end - start 
                 time_list.append(duration)
 
-        print(f"Forward Only, Mean: {statistics.mean(time_list)}, Std: {statistics.stdev(time_list)}")
+        print(f"Forward Only, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 
     elif args.pass_type == "both":
         # Run w warm-up steps
@@ -101,7 +137,7 @@ def main():
             duration = end - start 
             time_list.append(duration)
 
-        print(f"Both, Mean: {statistics.mean(time_list)}, Std: {statistics.stdev(time_list)}")
+        print(f"Both, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 
     else:
         raise ValueError("Argument of pass type does not exist")
@@ -109,8 +145,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 
 
 
