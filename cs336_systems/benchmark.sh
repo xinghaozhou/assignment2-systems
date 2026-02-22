@@ -1,6 +1,7 @@
 uv run nsys profile -o result python benchmark.py \
     --device cuda \
     --dtype float16 \
+    --size small \
     --d_model 2560 \
     --d_ff 10240 \
     --num_layers 32 \

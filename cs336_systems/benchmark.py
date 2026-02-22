@@ -33,26 +33,31 @@ def main():
     rope_theta = 10000
 
     if args.size == "small":
+      print(f"size = {args.size}")
       d_model=768
       d_ff=3072
       num_layers=12
       num_heads=12
     elif args.size == "medium":
+      print(f"size = {args.size}")
       d_model=1024
       d_ff=4096
       num_layers=24
       num_heads=16
     elif args.size == "large":
+      print(f"size = {args.size}")
       d_model=1290
       d_ff=5120
       num_layers=36
       num_heads=20
     elif args.size == "xl":
+      print(f"size = {args.size}")
       d_model=1600
       d_ff=6400
       num_layers=48
       num_heads=25
     elif args.size == "2.7B":
+      print(f"size = {args.size}")
       d_model=2560
       d_ff=6400
       num_layers=32
@@ -95,14 +100,14 @@ def main():
             for _ in range(args.warmup_steps):
                 y = model(x)
 
-            with nvtx.range("forward"):
-                for _ in range(args.test_steps):
-                    start = timeit.default_timer()
-                    y = model(x)
-                    torch.cuda.synchronize() # Make sure CPU and GPU aligned
-                    end = timeit.default_timer()
-                    duration = end - start 
-                    time_list.append(duration)
+            for _ in range(args.test_steps):
+                start = timeit.default_timer()
+                with nvtx.range("forward"):
+                  y = model(x)
+                torch.cuda.synchronize() # Make sure CPU and GPU aligned
+                end = timeit.default_timer()
+                duration = end - start 
+                time_list.append(duration)
 
         print(f"Forward Only, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 
@@ -125,14 +130,17 @@ def main():
             start = timeit.default_timer()
             optim.zero_grad()
 
-            # get the result
-            y = model(x)
+            with nvtx.range("forward"):
+              # get the result
+              y = model(x)
+              # get the loss
+              loss = cross_entropy(y, gt)
         
-            # get the loss
-            loss = cross_entropy(y, gt)
-            loss.backward()
+            with nvtx.range("backward"):
+              loss.backward()
 
-            optim.step()
+            with nvtx.range("optimizer"):
+              optim.step()
 
             torch.cuda.synchronize() # Make sure CPU and GPU aligned
 
