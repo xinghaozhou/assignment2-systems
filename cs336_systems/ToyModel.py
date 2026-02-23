@@ -30,6 +30,8 @@ if __name__ == "__main__":
         y = model(x)
         loss = nn.CrossEntropy(y, gt)
 
+        breakpoint()
+
         loss.backward()
 
         optim.step()
