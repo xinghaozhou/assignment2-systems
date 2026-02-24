@@ -4,6 +4,7 @@ import torch
 import timeit
 import statistics
 from cs336_basics.model import BasicsTransformerLM
+
 from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
 
@@ -14,6 +15,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--device", help="device", default='mps', type=str)
 parser.add_argument("--dtype", help="dtype", type=str)
 parser.add_argument("--size", help="Model Size", type=str)
+
+parser.add_argument("--use_bf16", help="Model Size", type=bool)
 
 parser.add_argument("--d_model", help="d_model", type=int)
 parser.add_argument("--d_ff", help="d_ff", type=int)
@@ -52,14 +55,14 @@ def annotated_scaled_dot_product_attention(
 
     return output
    
-   
+import cs336_basics.model
 cs336_basics.model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
 
 
 
 def main():
     batch_size = 4
-    context_length = 128
+    context_length = 1024
     vocab_size = 10000
     rope_theta = 10000
 
@@ -77,7 +80,7 @@ def main():
       num_heads=16
     elif args.size == "large":
       print(f"size = {args.size}")
-      d_model=1290
+      d_model=1280
       d_ff=5120
       num_layers=36
       num_heads=20
@@ -127,11 +130,26 @@ def main():
 
     
     if args.pass_type == "forward":
-        with torch.no_grad():
-            for _ in range(args.warmup_steps):
+      with torch.no_grad():
+          if args.use_bf16:
+            with autocast(device_type="cuda", dtype=torch.bfloat16):
+              for _ in range(args.warmup_steps):
+                  y = model(x)
+              
+              for _ in range(args.test_steps):
+                  start = timeit.default_timer()
+                  with nvtx.range("forward"):
+                    y = model(x)
+                  torch.cuda.synchronize() # Make sure CPU and GPU aligned
+                  end = timeit.default_timer()
+                  duration = end - start 
+                  time_list.append(duration)
+          else:
+            with nullcontext():
+              for _ in range(args.warmup_steps):
                 y = model(x)
-
-            for _ in range(args.test_steps):
+              
+              for _ in range(args.test_steps):
                 start = timeit.default_timer()
                 with nvtx.range("forward"):
                   y = model(x)
@@ -140,45 +158,87 @@ def main():
                 duration = end - start 
                 time_list.append(duration)
 
-        print(f"Forward Only, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
+      print(f"Forward Only, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 
     elif args.pass_type == "both":
-        # Run w warm-up steps
-        for _ in range(args.warmup_steps):
-            optim.zero_grad()
+      if args.use_bf16:
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+          # Run w warm-up steps
+          for _ in range(args.warmup_steps):
+              optim.zero_grad()
 
-            # get the result
-            y = model(x)
-        
-            # get the loss
-            loss = cross_entropy(y, gt)
-            loss.backward()
-
-            # update the optimizer
-            optim.step()
-
-        for _ in range(args.test_steps):
-            start = timeit.default_timer()
-            optim.zero_grad()
-
-            with nvtx.range("forward"):
               # get the result
               y = model(x)
+          
               # get the loss
               loss = cross_entropy(y, gt)
-        
-            with nvtx.range("backward"):
               loss.backward()
 
-            with nvtx.range("optimizer"):
+              # update the optimizer
               optim.step()
 
-            torch.cuda.synchronize() # Make sure CPU and GPU aligned
+          for _ in range(args.test_steps):
+              start = timeit.default_timer()
+              optim.zero_grad()
 
-            end = timeit.default_timer()
+              with nvtx.range("forward"):
+                # get the result
+                y = model(x)
+                # get the loss
+                loss = cross_entropy(y, gt)
+          
+              with nvtx.range("backward"):
+                loss.backward()
 
-            duration = end - start 
-            time_list.append(duration)
+              with nvtx.range("optimizer"):
+                optim.step()
+
+              torch.cuda.synchronize() # Make sure CPU and GPU aligned
+
+              end = timeit.default_timer()
+
+              duration = end - start 
+              time_list.append(duration)
+
+      else:
+        with nullcontext():
+          # Run w warm-up steps
+          for _ in range(args.warmup_steps):
+              optim.zero_grad()
+
+              # get the result
+              y = model(x)
+          
+              # get the loss
+              loss = cross_entropy(y, gt)
+              loss.backward()
+
+              # update the optimizer
+              optim.step()
+
+          for _ in range(args.test_steps):
+              start = timeit.default_timer()
+              optim.zero_grad()
+
+              with nvtx.range("forward"):
+                # get the result
+                y = model(x)
+                # get the loss
+                loss = cross_entropy(y, gt)
+          
+              with nvtx.range("backward"):
+                loss.backward()
+
+              with nvtx.range("optimizer"):
+                optim.step()
+
+              torch.cuda.synchronize() # Make sure CPU and GPU aligned
+
+              end = timeit.default_timer()
+
+              duration = end - start 
+              time_list.append(duration)
+
 
         print(f"Both, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 

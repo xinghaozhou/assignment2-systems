@@ -20,17 +20,16 @@ class ToyModel(nn.Module):
 
 
 if __name__ == "__main__":
-    model = ToyModel(10, 2)
-    x = torch.zeros(size=(1, 1, 10), dtype=torch.float16)
-    gt = torch.zeros(size=(1, 1, 2), dtype=torch.float16)
+    model = ToyModel(1, 2).to('cuda')
+    x = torch.zeros(size=(1, 1, 1), dtype=torch.float16).to('cuda')
+    gt = torch.zeros(size=(1, 1, 2), dtype=torch.float16).to('cuda')
+    loss = nn.CrossEntropyLoss()
 
     optim = AdamW(model.parameters())
 
-    with torch.autocast(device_type="cpu", dtype=torch.float16):
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
         y = model(x)
-        loss = nn.CrossEntropy(y, gt)
-
-        breakpoint()
+        loss = loss(y, gt)
 
         loss.backward()
 
