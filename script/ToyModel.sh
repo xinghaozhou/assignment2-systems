@@ -1,0 +1,1 @@
+uv run python cs336_systems/ToyModel.py
