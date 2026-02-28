@@ -1,4 +1,4 @@
-uv run python end_to_end_benchmarking.py \
+uv run python -m benchmark.py \
     --device cuda \
     --dtype float16 \
     --d_model 2560 \

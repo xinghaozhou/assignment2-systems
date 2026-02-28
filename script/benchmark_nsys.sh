@@ -1,4 +1,4 @@
-uv run python -m cs336_systems.benchmark \
+uv run nsys profile -o result python -m cs336_systems.benchmark \
     --device cuda \
     --dtype float32 \
     --size 2.7B \

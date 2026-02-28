@@ -16,7 +16,8 @@ parser.add_argument("--device", help="device", default='mps', type=str)
 parser.add_argument("--dtype", help="dtype", type=str)
 parser.add_argument("--size", help="Model Size", type=str)
 
-parser.add_argument("--use_bf16", help="Model Size", type=bool)
+parser.add_argument("--use_bf16", help="Mixed Precision using bf16", type=bool)
+parser.add_argument("--memory_record", help="Turn on the memory record of CUDA", type=bool)
 
 parser.add_argument("--d_model", help="d_model", type=int)
 parser.add_argument("--d_ff", help="d_ff", type=int)
@@ -58,14 +59,12 @@ def annotated_scaled_dot_product_attention(
 import cs336_basics.model
 cs336_basics.model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
 
-
-
 def main():
     batch_size = 4
     context_length = 1024
     vocab_size = 10000
     rope_theta = 10000
-
+       
     if args.size == "small":
       print(f"size = {args.size}")
       d_model=768
@@ -102,7 +101,6 @@ def main():
       num_layers=args.num_layers
       num_heads=args.num_heads
     
-
     if args.dtype == "float16":
       model = BasicsTransformerLM(vocab_size=vocab_size, context_length=context_length, d_model=d_model, num_layers=num_layers, num_heads=num_heads, d_ff=d_ff, rope_theta=rope_theta).to(args.device, torch.float16)
     elif args.dtype == "float32":
@@ -119,7 +117,6 @@ def main():
         size=(batch_size, context_length),
         device=args.device
     )
-
     gt = torch.randint(
         low=0,
         high=vocab_size,
@@ -127,15 +124,16 @@ def main():
         device=args.device
     )
     
-
-    
     if args.pass_type == "forward":
       with torch.no_grad():
           if args.use_bf16:
             with autocast(device_type="cuda", dtype=torch.bfloat16):
               for _ in range(args.warmup_steps):
                   y = model(x)
-              
+
+              # Start recording the history
+              if args.memory_record:
+                torch.cuda.memory._record_memory_history(max_entries=1000000)
               for _ in range(args.test_steps):
                   start = timeit.default_timer()
                   with nvtx.range("forward"):
@@ -144,11 +142,19 @@ def main():
                   end = timeit.default_timer()
                   duration = end - start 
                   time_list.append(duration)
+              
+              if args.memory_record:
+                # Dump the recorded history
+                torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+                # Stop recording the history
+                torch.cuda.memory._record_memory_history(enabled=None)
           else:
             with nullcontext():
               for _ in range(args.warmup_steps):
                 y = model(x)
-              
+              # Start recording the history
+              if args.memory_record:
+                torch.cuda.memory._record_memory_history(max_entries=1000000)
               for _ in range(args.test_steps):
                 start = timeit.default_timer()
                 with nvtx.range("forward"):
@@ -157,6 +163,11 @@ def main():
                 end = timeit.default_timer()
                 duration = end - start 
                 time_list.append(duration)
+              if args.memory_record:
+                # Dump the recorded history
+                torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+                # Stop recording the history
+                torch.cuda.memory._record_memory_history(enabled=None)
 
       print(f"Forward Only, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 
@@ -166,79 +177,75 @@ def main():
           # Run w warm-up steps
           for _ in range(args.warmup_steps):
               optim.zero_grad()
-
               # get the result
               y = model(x)
-          
               # get the loss
               loss = cross_entropy(y, gt)
               loss.backward()
-
               # update the optimizer
               optim.step()
-
+          # Start recording the history
+          if args.memory_record:
+              torch.cuda.memory._record_memory_history(max_entries=1000000)
           for _ in range(args.test_steps):
               start = timeit.default_timer()
               optim.zero_grad()
-
               with nvtx.range("forward"):
                 # get the result
                 y = model(x)
                 # get the loss
                 loss = cross_entropy(y, gt)
-          
               with nvtx.range("backward"):
                 loss.backward()
-
               with nvtx.range("optimizer"):
                 optim.step()
-
               torch.cuda.synchronize() # Make sure CPU and GPU aligned
-
               end = timeit.default_timer()
-
               duration = end - start 
               time_list.append(duration)
+          if args.memory_record:
+            # Dump the recorded history
+            torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+            # Stop recording the history
+            torch.cuda.memory._record_memory_history(enabled=None)
 
       else:
         with nullcontext():
           # Run w warm-up steps
           for _ in range(args.warmup_steps):
               optim.zero_grad()
-
               # get the result
               y = model(x)
-          
               # get the loss
               loss = cross_entropy(y, gt)
               loss.backward()
-
               # update the optimizer
               optim.step()
+          # Start recording the history
+          if args.memory_record:
+              torch.cuda.memory._record_memory_history(max_entries=1000000)
 
           for _ in range(args.test_steps):
               start = timeit.default_timer()
               optim.zero_grad()
-
               with nvtx.range("forward"):
                 # get the result
                 y = model(x)
                 # get the loss
                 loss = cross_entropy(y, gt)
-          
               with nvtx.range("backward"):
                 loss.backward()
-
               with nvtx.range("optimizer"):
                 optim.step()
-
               torch.cuda.synchronize() # Make sure CPU and GPU aligned
-
               end = timeit.default_timer()
-
               duration = end - start 
               time_list.append(duration)
-
+          if args.memory_record:
+            # Dump the recorded history
+            torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+            # Stop recording the history
+            torch.cuda.memory._record_memory_history(enabled=None)
 
         print(f"Both, Mean: {statistics.mean(time_list):.2f}, Std: {statistics.stdev(time_list):.2f}")
 
@@ -248,6 +255,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
