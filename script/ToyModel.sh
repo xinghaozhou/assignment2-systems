@@ -1,1 +1,1 @@
-uv run python -m cs336_systems.ToyModel.py
+uv run python -m cs336_systems.ToyModel

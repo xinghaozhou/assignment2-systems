@@ -1,10 +1,11 @@
-uv run python -m benchmark.py \
+uv run python -m cs336_systems.benchmark \
     --device cuda \
     --dtype float16 \
+    --size 2.7B \
     --d_model 2560 \
     --d_ff 10240 \
     --num_layers 32 \
     --num_heads 32 \
-    --warmup_steps 5 \
-    --pass_type both \
+    --warmup_steps 0 \
+    --pass_type forward \
     --test_steps 10 \

@@ -3,6 +3,8 @@ import numpy as np
 import torch 
 import timeit
 import statistics
+
+from contextlib import nullcontext
 from cs336_basics.model import BasicsTransformerLM
 
 from cs336_basics.optimizer import AdamW
@@ -16,8 +18,9 @@ parser.add_argument("--device", help="device", default='mps', type=str)
 parser.add_argument("--dtype", help="dtype", type=str)
 parser.add_argument("--size", help="Model Size", type=str)
 
-parser.add_argument("--use_bf16", help="Mixed Precision using bf16", type=bool)
-parser.add_argument("--memory_record", help="Turn on the memory record of CUDA", type=bool)
+# use this as bool args
+parser.add_argument("--use_bf16", action="store_true") 
+parser.add_argument("--use_memory_record", action="store_true")
 
 parser.add_argument("--d_model", help="d_model", type=int)
 parser.add_argument("--d_ff", help="d_ff", type=int)
@@ -60,8 +63,8 @@ import cs336_basics.model
 cs336_basics.model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
 
 def main():
-    batch_size = 4
-    context_length = 1024
+    batch_size = 1
+    context_length = 512
     vocab_size = 10000
     rope_theta = 10000
        
@@ -92,7 +95,7 @@ def main():
     elif args.size == "2.7B":
       print(f"size = {args.size}")
       d_model=2560
-      d_ff=6400
+      d_ff=10240
       num_layers=32
       num_heads=32
     else:
@@ -123,16 +126,18 @@ def main():
         size=(batch_size, context_length),
         device=args.device
     )
+
+    breakpoint()
     
     if args.pass_type == "forward":
       with torch.no_grad():
           if args.use_bf16:
-            with autocast(device_type="cuda", dtype=torch.bfloat16):
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
               for _ in range(args.warmup_steps):
                   y = model(x)
 
               # Start recording the history
-              if args.memory_record:
+              if args.use_memory_record:
                 torch.cuda.memory._record_memory_history(max_entries=1000000)
               for _ in range(args.test_steps):
                   start = timeit.default_timer()
@@ -143,7 +148,7 @@ def main():
                   duration = end - start 
                   time_list.append(duration)
               
-              if args.memory_record:
+              if args.use_memory_record:
                 # Dump the recorded history
                 torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
                 # Stop recording the history
@@ -153,7 +158,7 @@ def main():
               for _ in range(args.warmup_steps):
                 y = model(x)
               # Start recording the history
-              if args.memory_record:
+              if args.use_memory_record:
                 torch.cuda.memory._record_memory_history(max_entries=1000000)
               for _ in range(args.test_steps):
                 start = timeit.default_timer()
@@ -163,7 +168,7 @@ def main():
                 end = timeit.default_timer()
                 duration = end - start 
                 time_list.append(duration)
-              if args.memory_record:
+              if args.use_memory_record:
                 # Dump the recorded history
                 torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
                 # Stop recording the history
@@ -185,7 +190,7 @@ def main():
               # update the optimizer
               optim.step()
           # Start recording the history
-          if args.memory_record:
+          if args.use_memory_record:
               torch.cuda.memory._record_memory_history(max_entries=1000000)
           for _ in range(args.test_steps):
               start = timeit.default_timer()
@@ -203,7 +208,7 @@ def main():
               end = timeit.default_timer()
               duration = end - start 
               time_list.append(duration)
-          if args.memory_record:
+          if args.use_memory_record:
             # Dump the recorded history
             torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
             # Stop recording the history
@@ -222,7 +227,7 @@ def main():
               # update the optimizer
               optim.step()
           # Start recording the history
-          if args.memory_record:
+          if args.use_memory_record:
               torch.cuda.memory._record_memory_history(max_entries=1000000)
 
           for _ in range(args.test_steps):
@@ -241,7 +246,7 @@ def main():
               end = timeit.default_timer()
               duration = end - start 
               time_list.append(duration)
-          if args.memory_record:
+          if args.use_memory_record:
             # Dump the recorded history
             torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
             # Stop recording the history

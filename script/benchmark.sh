@@ -2,12 +2,10 @@ uv run python -m cs336_systems.benchmark \
     --device cuda \
     --dtype float32 \
     --size 2.7B \
-    --use_bf16 True \
-    --memory_record False \
     --d_model 2560 \
     --d_ff 10240 \
     --num_layers 32 \
     --num_heads 32 \
     --warmup_steps 5 \
-    --pass_type both \
+    --pass_type forward \
     --test_steps 10 \
