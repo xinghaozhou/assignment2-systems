@@ -2,6 +2,8 @@ uv run nsys profile -o result python -m cs336_systems.benchmark \
     --device cuda \
     --dtype float32 \
     --size 2.7B \
+    --batch 4 \
+    --seq_len 128 \
     --d_model 2560 \
     --d_ff 10240 \
     --num_layers 32 \
