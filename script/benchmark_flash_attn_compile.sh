@@ -1,4 +1,3 @@
-#!/bin/bash
 
 BATCH_SIZE=8
 
@@ -14,8 +13,8 @@ do
     --head_embedding $D_MODEL\
     --seq_len $SEQ_LEN \
     --iteration 100\
-
+    --use_compile \
+    
   done
 done
-
 
