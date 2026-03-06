@@ -17,6 +17,8 @@ parser.add_argument("--head_embedding", help="head embedding", type=int)
 parser.add_argument("--seq_len", help="sequence length for benchmark", type=int)
 parser.add_argument("--iteration", help="num of iterations for testing", type=int)
 
+parser.add_argument("--use_compile", action="store_true")
+
 args = parser.parse_args()
 
 def main():
@@ -30,6 +32,9 @@ def main():
         dtype = torch.float32
     else:
         raise ValueError("Invalid dtype")
+    
+    if args.use_compile:
+        scaled_dot_product_attention = torch.compile(scaled_dot_product_attention)
 
     Q = torch.randn(B, args.seq_len, args.head_embedding, device=args.device, dtype=dtype, requires_grad=True)
     K = torch.randn(B, args.seq_len, args.head_embedding, device=args.device, dtype=dtype, requires_grad=True)
@@ -58,7 +63,7 @@ def main():
         for _ in range(iters):
             attn_scores = scaled_dot_product_attention(Q, K, V, mask)
             torch.cuda.synchronize()
-            
+
     end = timeit.default_timer()
 
     print(f"Combination: {args.seq_len} {args.head_embedding}, Total Time of Forward takes {(end - start):.2f}, takes {((end - start) / iters):.2f} per forward.")

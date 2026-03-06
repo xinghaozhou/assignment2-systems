@@ -21,6 +21,11 @@ parser.add_argument("--size", help="Model Size", type=str)
 # use this as bool args
 parser.add_argument("--use_bf16", action="store_true") 
 parser.add_argument("--use_memory_record", action="store_true")
+parser.add_argument("--use_compile", action="store_true")
+
+# experiment setup
+parser.add_argument("--batch", help="batch size for benchmark", type=int)
+parser.add_argument("--seq_len", help="context length for benchmark", type=int)
 
 parser.add_argument("--d_model", help="d_model", type=int)
 parser.add_argument("--d_ff", help="d_ff", type=int)
@@ -63,8 +68,8 @@ import cs336_basics.model
 cs336_basics.model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
 
 def main():
-    batch_size = 1
-    context_length = 512
+    batch_size = args.batch
+    context_length = args.seq_len
     vocab_size = 10000
     rope_theta = 10000
        
@@ -109,6 +114,9 @@ def main():
     elif args.dtype == "float32":
       model = BasicsTransformerLM(vocab_size=vocab_size, context_length=context_length, d_model=d_model, num_layers=num_layers, num_heads=num_heads, d_ff=d_ff, rope_theta=rope_theta).to(args.device, torch.float32)
 
+    if args.use_compile:
+       model = torch.compile(model)
+
     optim = AdamW(params=model.parameters(), lr=1.0, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
 
     time_list = []
@@ -126,8 +134,6 @@ def main():
         size=(batch_size, context_length),
         device=args.device
     )
-
-    breakpoint()
     
     if args.pass_type == "forward":
       with torch.no_grad():

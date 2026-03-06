@@ -17,6 +17,8 @@ dependencies = [
     "wandb>=0.19.7",
     "pandas>=2",
     "ty>=0.0.1a16",
+    "typing-extensions>=4.14.1",
+    "torch>=2.2.2",
 ]
 
 [build-system]
