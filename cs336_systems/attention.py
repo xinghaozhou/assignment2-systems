@@ -1,12 +1,11 @@
 import argparse
 import torch
-from einops import einsum, rearrange, einx
+from einops import einsum, rearrange
+import einx
 import torch.cuda.nvtx as nvtx
 import timeit
 
 from cs336_basics.model import scaled_dot_product_attention
-
-
 
 parser = argparse.ArgumentParser()
  
@@ -34,7 +33,9 @@ def main():
         raise ValueError("Invalid dtype")
     
     if args.use_compile:
-        scaled_dot_product_attention = torch.compile(scaled_dot_product_attention)
+        attn_fn = torch.compile(scaled_dot_product_attention)
+    else:
+        attn_fn = scaled_dot_product_attention
 
     Q = torch.randn(B, args.seq_len, args.head_embedding, device=args.device, dtype=dtype, requires_grad=True)
     K = torch.randn(B, args.seq_len, args.head_embedding, device=args.device, dtype=dtype, requires_grad=True)
@@ -43,33 +44,28 @@ def main():
     mask = torch.triu(
         torch.ones(args.seq_len, args.seq_len, device=args.device),
         diagonal=1
-    )
-
-    mask = mask.masked_fill(mask == 1, float("-inf"))
-    mask = mask.to(dtype)
+    ).bool()
 
     for _ in range(warmup_iters):
         for t in (Q, K, V):
             t.grad = None
-        attn_scores = scaled_dot_product_attention(Q, K, V, mask, device=args.device, dtype=dtype)
+        attn_scores = attn_fn(Q, K, V, mask)
         loss = attn_scores.sum()
         loss.backward()
         
-
     torch.cuda.synchronize()
     start = timeit.default_timer()
 
     with torch.no_grad():
         for _ in range(iters):
-            attn_scores = scaled_dot_product_attention(Q, K, V, mask)
-            torch.cuda.synchronize()
-
+            attn_scores = attn_fn(Q, K, V, mask)
+    torch.cuda.synchronize()
     end = timeit.default_timer()
 
-    print(f"Combination: {args.seq_len} {args.head_embedding}, Total Time of Forward takes {(end - start):.2f}, takes {((end - start) / iters):.2f} per forward.")
+    print(f"Forward! seq_len: {args.seq_len}; head_emb: {args.head_embedding}, Total Time of Forward takes {((end - start)*1000):.2f} ms, takes {(((end - start)*1000) / iters):.2f} ms per forward.")
 
     torch.cuda.memory._record_memory_history(max_entries=1000000)
-    attn_scores = scaled_dot_product_attention(Q, K, V, mask)
+    attn_scores = attn_fn(Q, K, V, mask)
              
     torch.cuda.memory._dump_snapshot(f"{args.seq_len}_{args.head_embedding}_memory_snapshot.pickle")
                 
@@ -81,17 +77,13 @@ def main():
     for _ in range(iters):
         for t in (Q, K, V):
             t.grad = None
-        attn_scores = scaled_dot_product_attention(Q, K, V, mask)
+        attn_scores = attn_fn(Q, K, V, mask)
         loss = attn_scores.sum()
         loss.backward()
-        torch.cuda.synchronize()
 
+    torch.cuda.synchronize()
     end = timeit.default_timer()
-    print(f"Combination: {args.seq_len} {args.head_embedding}, Total Time of Backward takes {(end - start):.2f}, takes {((end - start) / iters):.2f} per forward.")
-
-
-
-
+    print(f"Backward! seq_len: {args.seq_len}; head_emb: {args.head_embedding}, Total Time of Backward takes {((end - start)*1000):.2f}, takes {(((end - start)*1000) / iters):.2f} ms per Backward.")
 
     return attn_scores
 
@@ -100,13 +92,3 @@ if __name__ == "__main__":
     main()
 
     
-
-
-       
-
-
-
-
-
-
-
