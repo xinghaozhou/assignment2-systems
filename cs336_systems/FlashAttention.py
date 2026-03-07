@@ -121,8 +121,6 @@ class FlashAttention(torch.autograd.Function):
     def backward():
         raise NotImplementedError
 
-
-
 @triton.jit
 def flash_fwd_kernel(
     Q_ptr, K_ptr, V_ptr,
@@ -202,10 +200,13 @@ def flash_fwd_kernel(
         K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero") # (K_TILE_SIZE, D)
         V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero") # (K_TILE_SIZE, D)
 
-        S_ij = tl.dot(Q_i, tl.trans(K_j)) / (D ** 0.5) # (Q_TILE_SIZE, K_TILE_SIZE)
+        S_ij = tl.dot(Q_i, tl.trans(K_j)) / scale # (Q_TILE_SIZE, K_TILE_SIZE)
         m_ij = tl.max(m_i_prev,  tl.max(S_ij, dim=-1)) # (Q_TILE_SIZE, )
         P_ij = tl.exp(S_ij - m_ij[..., None]) # (Q_TILE_SIZE, K_TILE_SIZE)
         l_ij = tl.exp(m_i_prev - m_ij) * l_i_prev + tl.sum(P_ij, dim=-1) # (Q_TILE_SIZE, )
+
+        # Casting P_ij to V_j dtype
+        P_ij = P_ij.to(V_j.dtype)
         O_ij = tl.exp(m_i_prev - m_ij)[..., None] * O_i_prev + tl.dot(P_ij, V_j) # (Q_TILE_SIZE, D)
 
         # Moving
@@ -230,15 +231,59 @@ class FlashAttentionTriton(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx,
-        x,
         Q: Float[Tensor, "... queries d_k"],
         K: Float[Tensor, "... keys d_k"],
         V: Float[Tensor, "... values d_k"],
         is_causal=False
         ):
 
-        breakpoint()
-        raise NotImplementedError
+        q_batch, N_QUERIES, D = Q.shape
+        k_batch, N_KEYS, D = K.shape
+
+        assert q_batch == k_batch # Make sure batch-dim matches
+
+        device = Q.device
+
+        Q_TILE_SIZE = 16
+        K_TILE_SIZE = 16
+
+        ctx.Q_TILE_SIZE = Q_TILE_SIZE
+        ctx.K_TILE_SIZE= K_TILE_SIZE
+        ctx.D = D
+
+        scale = 1/ (D ** 0.5)
+
+        # Make O and L for output
+        O = tl.empty(
+            size=(N_QUERIES, D),
+            dtype=tl.float32,
+            device=device
+        )
+
+        L = tl.empty(
+            size=(N_QUERIES, ),
+            dtype=tl.float32,
+            device=device
+        )
+
+        flash_fwd_kernel[tl.cdiv(N_QUERIES, Q_TILE_SIZE), ](
+            Q, K, V, O, L,
+            1, Q_TILE_SIZE, Q_TILE_SIZE, # stride_qb, stride_qq, stride_qd
+            1, K_TILE_SIZE, K_TILE_SIZE, # stride_kb, stride_kk, stride_kd
+            1, K_TILE_SIZE, K_TILE_SIZE, # stride_vb, stride_vk, stride_vd
+            1, Q_TILE_SIZE, Q_TILE_SIZE, # stride_ob, stride_oq, stride_od
+            1, Q_TILE_SIZE,              # stride_lb, stride_lq, stride_ld
+
+            N_QUERIES, N_KEYS,
+            scale,
+            ctx
+        )
+
+        ctx.save_for_backward(
+            L, Q, K, V, O
+        )
+
+        return O
 
     @staticmethod
     def backward():
