@@ -116,11 +116,12 @@ class FlashAttentionPytorch(torch.autograd.Function):
         return O
 
     @staticmethod
-    def backward(
-        ctx, Q, K, V, O, dO, L
-    ):
-        B, N_QUERIES, D = Q.shape 
-        B, N_KEYS, D = K.shape
+    def backward(ctx, dO):
+        L, Q, K, V, O = ctx.saved_tensors
+
+        B, N_QUERIES, d = Q.shape 
+
+        B, N_KEYS, d = K.shape
 
         dtype = Q.dtype
 
@@ -155,22 +156,25 @@ class FlashAttentionPytorch(torch.autograd.Function):
                 K_j = K[..., start_k:end_k, :] # (B, K_TILE_SIZE, D)
                 V_j = V[..., start_k:end_k, :] # (B, K_TILE_SIZE, D)
 
-                dK_j = torch.zeros((Bk, D), dtype=dtype)
-                dV_j = torch.zeros((Bk, D), dtype=dtype)
+                dK_j = torch.zeros((B, Bk, d), dtype=dtype)
+                dV_j = torch.zeros((B, Bk, d), dtype=dtype)
 
-                S_ij = Q_i @ K_j.permute(0, -1, -2) / (D ** 0.5) # (B, Q_TILE_SIZE, K_TILE_SIZE)
+                S_ij = (Q_i @ K_j.permute(0, -1, -2)) / (d ** 0.5) # (B, Q_TILE_SIZE, K_TILE_SIZE)
+
                 P_ij = torch.exp(S_ij - L_i[..., None]) # (B, Q_TILE_SIZE, K_TILE_SIZE)
-                dV_j += P_ij.transpose(0, -2, -1) @ dO_i # (B, K_TILE_SIZE, )
-                dP_ij = dO_i @ V_j.transpose(0, -2, -1) # (B, Q_TILE_SIZE, K_TILE_SIZE) 
-                dS_ij = P_ij * (dP_ij - D_i) / (D ** 0.5) # (B, Q_TILE_SIZE, K_TILE_SIZE) 
 
-                dQ_i += dQ[..., start_q:end_q, :] + dS_ij @ K_j # (B, Q_TILE_SIZE, D)
+                dV_j += (P_ij.permute(0, -1, -2)) @ dO_i # (B, K_TILE_SIZE, )
+
+                dP_ij = dO_i @ V_j.permute(0, -1, -2) # (B, Q_TILE_SIZE, K_TILE_SIZE) 
+                dS_ij = P_ij * (dP_ij - D_i[..., None]) / (d ** 0.5) # (B, Q_TILE_SIZE, K_TILE_SIZE) 
+
+                dQ_i = dQ[..., start_q:end_q, :]
+                dQ_i += dS_ij @ K_j # (B, Q_TILE_SIZE, D)
                 dQ[..., start_q:end_q, :] = dQ_i
 
-                dK_j += dS_ij.transpose(0, -2, -1) @ Q_i # (B, K_TILE_SIZE, D)
+                dK_j += dS_ij.permute(0, -1, -2) @ Q_i # (B, K_TILE_SIZE, D)
 
-                dK[..., start_k:end_k] = dK_j
-                dV[..., start_k:end_k] = dV_j
+                dK[..., start_k:end_k, :] = dK_j
+                dV[..., start_k:end_k, :] = dV_j
 
-        
-        return dQ, dK, dV
+        return dQ, dK, dV, None
