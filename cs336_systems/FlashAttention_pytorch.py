@@ -133,14 +133,13 @@ class FlashAttentionPytorch(torch.autograd.Function):
 
         # only need to store D, L 
         D = torch.sum(dO * O, dim=-1) # (B, N_QUERIES) 
-        L = torch.zeros((B, N_QUERIES, ), dtype=dtype) # (B, N_QUERIES)
         dQ = torch.zeros_like(Q) # (B, N_QUERIES, D)
         dK = torch.zeros_like(K) # (B, N_KEYS, D)
         dV = torch.zeros_like(V) # (B, N_KEYS, D)
         
-        for j in range(1, Tk):
-            start_k = (i-1) * Bk
-            end_k = min(i * Bk, N_KEYS)
+        for j in range(1, Tk+1):
+            start_k = (j-1) * Bk
+            end_k = min(j * Bk, N_KEYS)
             
             K_j = K[..., start_k:end_k, :] # (B, K_TILE_SIZE, D)
             V_j = V[..., start_k:end_k, :] # (B, K_TILE_SIZE, D)
@@ -148,7 +147,7 @@ class FlashAttentionPytorch(torch.autograd.Function):
             dK_j = torch.zeros((B, Bk, d), dtype=dtype)
             dV_j = torch.zeros((B, Bk, d), dtype=dtype)
 
-            for i in range(1, Tq):
+            for i in range(1, Tq+1):
                 start_q = (i-1) * Bq
                 end_q = min(i * Bq, N_QUERIES)
 
@@ -164,12 +163,11 @@ class FlashAttentionPytorch(torch.autograd.Function):
 
                 P_ij = torch.exp(S_ij - L_i[..., None]) # (B, Q_TILE_SIZE, K_TILE_SIZE)
 
-                dV_j += (P_ij.permute(0, -1, -2)) @ dO_i # (B, K_TILE_SIZE, )
+                dV_j += (P_ij.permute(0, -1, -2)) @ dO_i # (B, K_TILE_SIZE, D)
 
                 dP_ij = dO_i @ V_j.permute(0, -1, -2) # (B, Q_TILE_SIZE, K_TILE_SIZE) 
                 dS_ij = P_ij * (dP_ij - D_i[..., None]) / (d ** 0.5) # (B, Q_TILE_SIZE, K_TILE_SIZE) 
 
-                dQ[..., start_q:end_q, :] = dQ_i
                 dQ_i += dS_ij @ K_j # (B, Q_TILE_SIZE, D)
                 
                 dK_j += dS_ij.permute(0, -1, -2) @ Q_i # (B, K_TILE_SIZE, D)

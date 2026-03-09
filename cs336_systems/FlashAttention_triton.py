@@ -135,6 +135,11 @@ def flash_fwd_kernel(
     O_block_ptr.advance((Q_TILE_SIZE, 0))
     L_block_ptr.advance((Q_TILE_SIZE, 0))    
 
+@triton.jit
+def flash_bwd_kernel(
+    
+)
+
 class FlashAttentionTriton(torch.autograd.Function):
     @staticmethod
     def forward(ctx,
@@ -209,7 +214,6 @@ class FlashAttentionTriton(torch.autograd.Function):
                 ctx.is_causal
             )
 
-        
         ctx.save_for_backward(
             L, Q, K, V, O
         )
@@ -217,5 +221,20 @@ class FlashAttentionTriton(torch.autograd.Function):
         return O
 
     @staticmethod
-    def backward():
-        raise NotImplementedError
+    def backward(ctx, dO):
+        L, Q, K, V, O = ctx.saved_tensors
+
+        B, N_QUERIES, d = Q.shape 
+
+        B, N_KEYS, d = K.shape
+
+        dtype = Q.dtype
+
+        Q_TILE_SIZE = 16
+        K_TILE_SIZE = 16
+
+        key_tile_index = tl.program_id(0) # Row i, equivalent one iter in i, ..., T
+        batch_index = tl.program_id(1)
+
+
+
