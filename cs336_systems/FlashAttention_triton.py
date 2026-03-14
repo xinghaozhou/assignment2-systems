@@ -149,124 +149,147 @@ def flash_bwd_kernel(
     stride_db, stride_dq, 
     stride_dOb, stride_dOq, stride_dOd,
     stride_dQb, stride_dQq, stride_dQd,
+    stride_dKb, stride_dKk, stride_dKd,
+    stride_dVb, stride_dVk, stride_dVd,
     N_QUERIES, N_KEYS,
     scale,
-    D: tl.constexpr,
+    D_dim: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,
     K_TILE_SIZE: tl.constexpr,
     is_causal: tl.constexpr=False
 ):
     query_tile_index = tl.program_id(0)
     batch_index = tl.program_id(1)
+
     
     Q_block_ptr = tl.make_block_ptr(
         Q_ptr + batch_index * stride_qb,
-        shape=(N_QUERIES, D),
-        stride=(stride_qq, stride_qd),
+        shape=(N_QUERIES, D_dim),
+        strides=(stride_qq, stride_qd),
         offsets=(query_tile_index * Q_TILE_SIZE, 0),
-        block_shape=(Q_TILE_SIZE, D),
+        block_shape=(Q_TILE_SIZE, D_dim),
         order=(1, 0),
     ) # (N_QUERIES, D)
 
     O_block_ptr = tl.make_block_ptr(
         O_ptr + batch_index * stride_ob,
-        shape=(N_QUERIES, D),
-        stride=(stride_oq, stride_od),
-        offset=(query_tile_index * Q_TILE_SIZE, 0),
-        block_shape=(Q_TILE_SIZE, D),
+        shape=(N_QUERIES, D_dim),
+        strides=(stride_oq, stride_od),
+        offsets=(query_tile_index * Q_TILE_SIZE, 0),
+        block_shape=(Q_TILE_SIZE, D_dim),
         order=(1, 0),
     ) # (N_QUERIES, D)
 
     dQ_block_ptr = tl.make_block_ptr(
         dQ_ptr + batch_index * stride_dQb,
-        shape=(N_QUERIES, D),
-        stride=(stride_dQq, stride_dQd),
-        offset=(query_tile_index * Q_TILE_SIZE, 0),
-        block_shape=(Q_TILE_SIZE, D),
+        shape=(N_QUERIES, D_dim),
+        strides=(stride_dQq, stride_dQd),
+        offsets=(query_tile_index * Q_TILE_SIZE, 0),
+        block_shape=(Q_TILE_SIZE, D_dim),
         order=(1, 0)
     )
 
     dO_block_ptr = tl.make_block_ptr(
         dO_ptr + batch_index * stride_dOb,
-        shape=(N_QUERIES, D),
-        stride=(stride_dOq, stride_dOd),
-        offset=(query_tile_index * Q_TILE_SIZE, 0),
-        block_shape=(Q_TILE_SIZE, D),
+        shape=(N_QUERIES, D_dim),
+        strides=(stride_dOq, stride_dOd),
+        offsets=(query_tile_index * Q_TILE_SIZE, 0),
+        block_shape=(Q_TILE_SIZE, D_dim),
         order=(1, 0),
     ) # (N_QUERIES, D)
 
     L_block_ptr = tl.make_block_ptr(
         L_ptr + batch_index * stride_lb,
         shape=(N_QUERIES, ),
-        stride=(stride_lq, ),
-        offset=(query_tile_index * Q_TILE_SIZE, ),
+        strides=(stride_lq, ),
+        offsets=(query_tile_index * Q_TILE_SIZE, ),
         block_shape=(Q_TILE_SIZE, ),
-        order=0,
+        order=(0, ),
     ) # (N_QUERIES, )
 
     D_block_ptr = tl.make_block_ptr(
         D_ptr + batch_index * stride_db,
         shape=(N_QUERIES, ),
-        stride=(stride_dq, ),
-        offset=(query_tile_index * Q_TILE_SIZE, ),
+        strides=(stride_dq, ),
+        offsets=(query_tile_index * Q_TILE_SIZE, ),
         block_shape=(Q_TILE_SIZE, ),
-        order=0,
+        order=(0, ),
     ) # (N_QUERIES, )
+
+    dK_block_ptr = tl.make_block_ptr(
+        dK_ptr + batch_index * stride_dKb,
+        shape=(N_KEYS, D_dim),
+        strides=(stride_dKk, stride_dKd),
+        offsets=(query_tile_index * K_TILE_SIZE, 0),
+        block_shape=(K_TILE_SIZE, D_dim),
+        order=(1, 0)
+    )
+
+    dV_block_ptr = tl.make_block_ptr(
+        dV_ptr + batch_index * stride_dVb,
+        shape=(N_KEYS, D_dim),
+        strides=(stride_dVk, stride_dVd),
+        offsets=(query_tile_index * K_TILE_SIZE, 0),
+        block_shape=(K_TILE_SIZE, D_dim),
+        order=(1, 0)
+    )
 
     Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
     O_i = tl.load(O_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
     dO_i = tl.load(dO_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
     dQ_i = tl.load(dQ_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
-    L_i = tl.load(L_block_ptr, boundary_check=(0), padding_options="zero") # (Q_TILE_SIZE, )
-    D_i = tl.load(D_block_ptr, boundary_check=(0), padding_options="zero") # (Q_TILE_SIZE, )
+    L_i = tl.load(L_block_ptr, boundary_check=(0, ), padding_option="zero") # (Q_TILE_SIZE, )
+    D_i = tl.load(D_block_ptr, boundary_check=(0, ), padding_option="zero") # (Q_TILE_SIZE, )
 
     for j in range(tl.cdiv(N_KEYS, K_TILE_SIZE)):
-        K_j = tl.make_block_ptr(
+        dK_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
+        dV_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
+
+        K_block_ptr = tl.make_block_ptr(
             K_ptr + batch_index * stride_kb,
-            shape=(N_KEYS, D),
-            stride=(stride_kk, stride_kd),
-            offset=(j * K_TILE_SIZE, ),
+            shape=(N_KEYS, D_dim),
+            strides=(stride_kk, stride_kd),
+            offsets=(j * K_TILE_SIZE, D_dim),
+            block_shape=(K_TILE_SIZE, D_dim),
             order=(1, 0)
         ) # (K_TILE_SIZE, D)
 
-        V_j = tl.make_block_ptr(
+        V_block_ptr = tl.make_block_ptr(
             V_ptr + batch_index * stride_vb,
-            shape=(N_KEYS, D),
-            stride=(stride_vk, stride_vd),
-            offset=(j * K_TILE_SIZE, ),
+            shape=(N_KEYS, D_dim),
+            strides=(stride_vk, stride_vd),
+            offsets=(j * K_TILE_SIZE, D_dim),
+            block_shape=(K_TILE_SIZE, D_dim),
             order=(1, 0)
         ) # (K_TILE_SIZE, D)
 
-        dK_j = tl.zeros(size=(K_TILE_SIZE, D)) # (K_TILE_SIZE, D)
+        K_j = tl.load(K_block_ptr, boundary_check=(1, 0), padding_option="zero")
 
-        dV_j = tl.zeros(size=(K_TILE_SIZE, D)) # (K_TILE_SIZE, D)
+        V_j = tl.load(V_block_ptr, boundary_check=(1, 0), padding_option="zero")
 
-        S_ij = tl.dot(Q_i, K_j.permuate(-1, -2)) * scale # (Q_TILE_SIZE, K_TILE_SIZE)
+        S_ij = tl.dot(Q_i, tl.trans(K_j)) * scale # (Q_TILE_SIZE, K_TILE_SIZE)
 
-        P_ij = tl.exp((S_ij - L_i[..., None])) # (Q_TILE_SIZE, K_TILE_SIZE)
+        P_ij = tl.exp((S_ij - L_i[:, None])) # (Q_TILE_SIZE, K_TILE_SIZE)
 
-        dV_j += tl.dot(P_ij.permute(-1, -2), dO_i) # (K_TILE_SIZE, D)
+        tl.atomic_add(dV_ptr, tl.dot(tl.trans(P_ij), dO_i)) # (K_TILE_SIZE, D)
+        #dV_j += tl.dot(tl.trans(P_ij), dO_i) # (K_TILE_SIZE, D)
 
-        dP_ij = tl.dot(dO_i, V_j.permute(-1, -2)) # (Q_TILE_SIZE, K_TILE_SIZE)
+        dP_ij = tl.dot(dO_i, tl.trans(V_j)) # (Q_TILE_SIZE, K_TILE_SIZE)
 
-        dS_ij = P_ij * (dP_ij - D_i[..., None]) / (D ** 0.5) # (Q_TILE_SIZE, K_TILE_SIZE)
+        dS_ij = P_ij * (dP_ij - D_i[:, None]) * scale # (Q_TILE_SIZE, K_TILE_SIZE)
 
-        tl.atomic_add(dQ_i, tl.dot(dS_ij, K_j)) # Atomic add (Q_TILE_SIZE, K_TILE_SIZE)
-
-    tl.store(dK_ptr, dK_j, boundary_check=(0, 1))
-    tl.store(dV_ptr, dV_j, boundary_check=(0, 1))
+        tl.atomic_add(dQ_ptr, tl.dot(dS_ij, K_j)) # Atomic add (Q_TILE_SIZE, K_TILE_SIZE)
+        tl.atomic_add(dK_ptr, tl.dot(tl.trans(dS_ij), Q_i))
 
     # Moving those in i-iteration
-    Q_block_ptr.advance((Q_TILE_SIZE, 0))
-    O_block_ptr.advance((Q_TILE_SIZE, 0))
-    dO_block_ptr.advance((Q_TILE_SIZE, 0))
-    L_block_ptr.advance((Q_TILE_SIZE,))
-    D_block_ptr.advance((Q_TILE_SIZE,))
+    Q_block_ptr = Q_block_ptr.advance((Q_TILE_SIZE, 0))
+    O_block_ptr = O_block_ptr.advance((Q_TILE_SIZE, 0))
+    dO_block_ptr = dO_block_ptr.advance((Q_TILE_SIZE, 0))
+    L_block_ptr = L_block_ptr.advance((Q_TILE_SIZE,))
+    D_block_ptr = D_block_ptr.advance((Q_TILE_SIZE,))
 
     return dQ_ptr, dK_ptr, dV_ptr
  
-
-   
 
 
     
@@ -365,10 +388,10 @@ class FlashAttentionTriton(torch.autograd.Function):
             dV.stride(0), dV.stride(1), dV.stride(2),   # stride_dvb, stride_dvk, stride_dvd
             N_QUERIES, N_KEYS,
             scale,
-            ctx.D,
-            ctx.Q_TILE_SIZE,
-            ctx.K_TILE_SIZE,
-            ctx.is_causal
+            D_dim=ctx.D,
+            Q_TILE_SIZE=ctx.Q_TILE_SIZE,
+            K_TILE_SIZE=ctx.K_TILE_SIZE,
+            is_causal=ctx.is_causal
         )
 
         return 
