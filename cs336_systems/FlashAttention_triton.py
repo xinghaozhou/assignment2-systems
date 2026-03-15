@@ -117,8 +117,8 @@ def flash_fwd_kernel(
         O_ij = tl.exp(m_i_prev - m_ij)[:, None] * O_i_prev + tl.dot(P_ij, V_j) # (Q_TILE_SIZE, D)
 
         # Moving
-        K_block_ptr = tl.advance(K_block_ptr, (K_TILE_SIZE, 0))
-        V_block_ptr = tl.advance(V_block_ptr, (K_TILE_SIZE, 0))
+        K_block_ptr = K_block_ptr.advance((K_TILE_SIZE, 0))
+        V_block_ptr = V_block_ptr.advance((K_TILE_SIZE, 0))
 
         O_i_prev = O_ij
         l_i_prev = l_ij
@@ -131,9 +131,9 @@ def flash_fwd_kernel(
     tl.store(O_block_ptr, O_i, boundary_check=(0, 1))
     tl.store(L_block_ptr, L_i, boundary_check=(0, ))
 
-    Q_block_ptr.advance((Q_TILE_SIZE, 0))
-    O_block_ptr.advance((Q_TILE_SIZE, 0))
-    L_block_ptr.advance((Q_TILE_SIZE, 0))    
+    Q_block_ptr = Q_block_ptr.advance((Q_TILE_SIZE, 0))
+    O_block_ptr = O_block_ptr.advance((Q_TILE_SIZE, 0))
+    L_block_ptr = L_block_ptr.advance((Q_TILE_SIZE, 0))    
 
 @triton.jit
 def flash_bwd_kernel(
@@ -199,8 +199,8 @@ def flash_bwd_kernel(
 
     dK_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
     dV_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
-    K_j = tl.load(K_block_ptr, boundary_check=(1, 0), padding_option="zero")
-    V_j = tl.load(V_block_ptr, boundary_check=(1, 0), padding_option="zero")
+    K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
+    V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
     
     for i in range(tl.cdiv(N_QUERIES, Q_TILE_SIZE)):
@@ -266,6 +266,21 @@ def flash_bwd_kernel(
 
         S_ij = tl.dot(Q_i, tl.trans(K_j)) * scale # (Q_TILE_SIZE, K_TILE_SIZE)
 
+        if is_causal:
+            # Get the global location of q/k tile with corresponding value [1, 2, 3..... ]
+            q_global = i * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE) # 
+            k_global = key_tile_index * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
+
+            # q_global = [1, 16], k_global = [16, 1]
+            # After broadcasting, q_global [0, 1, ... 15] on each row; k_global [0, 0, ... 0] on row 0, then [1, 1, 1,... 1]
+            # k_global > q_global gives diagonal=1 mask
+            mask = k_global[None, :] > q_global[:, None] 
+
+            mask_stable = tl.full((Q_TILE_SIZE, K_TILE_SIZE), float(1e-6), dtype=tl.float32)
+
+            S_ij = tl.where(mask, -float("inf"), S_ij)
+            S_ij += mask_stable
+
         P_ij = tl.exp((S_ij - L_i[:, None])) # (Q_TILE_SIZE, K_TILE_SIZE)
 
         dV_j += tl.dot(tl.trans(P_ij), dO_i) # (K_TILE_SIZE, D)
@@ -284,10 +299,13 @@ def flash_bwd_kernel(
             + d_offsets[None, :] * stride_dQd # col
         )
 
+        # To prevent the out of bound
         q_mask = q_offsets < N_QUERIES
+        d_mask = d_offsets < D_dim
+        mask = q_mask[:, None] & d_mask[None, :]
         dQ_update = tl.dot(dS_ij, K_j)
 
-        tl.atomic_add(dQ_ptrs, dQ_update, mask=q_mask[:, None])
+        tl.atomic_add(dQ_ptrs, dQ_update, mask=mask)
 
         dK_j += tl.dot(tl.trans(dS_ij), Q_i)
 
@@ -295,12 +313,6 @@ def flash_bwd_kernel(
     tl.store(dV_block_ptr, dV_j, boundary_check=(0, 1))
 
     # Moving those in j-iteration
-    K_block_ptr = tl.advance(K_block_ptr, (K_TILE_SIZE, 0))
-    V_block_ptr = tl.advance(V_block_ptr, (K_TILE_SIZE, 0))
-    dK_block_ptr = tl.advance(dK_block_ptr, (K_TILE_SIZE, 0))
-    dV_block_ptr = tl.advance(dV_block_ptr, (K_TILE_SIZE, 0))
-
-    return dQ_ptr, dK_ptr, dV_ptr
  
 
 
@@ -406,7 +418,7 @@ class FlashAttentionTriton(torch.autograd.Function):
             is_causal=ctx.is_causal
         )
 
-        return 
+        return dQ, dK, dV, None
 
 
 
