@@ -72,14 +72,17 @@ def flash_fwd_kernel(
         block_shape=(K_TILE_SIZE, D),
         order=(1, 0)
     )
-    
-
 
     Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
 
+    dtype = Q_i.dtype
+    Q_i = Q_i.to(tl.float32)
+
+
+    # Cast to fp32 to avoid accumulation error
     O_i_orig = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
-    l_i_orig = tl.zeros((Q_TILE_SIZE, ), dtype=tl.float32)
-    m_i_orig = tl.full((Q_TILE_SIZE, ), -float(torch.inf), dtype=tl.float32)
+    l_i_orig = tl.zeros((Q_TILE_SIZE,), dtype=tl.float32)
+    m_i_orig = tl.zeros((Q_TILE_SIZE,), dtype=tl.float32)
 
     O_i_prev = O_i_orig
     l_i_prev = l_i_orig
@@ -87,8 +90,8 @@ def flash_fwd_kernel(
 
     # Start the j loop
     for j in range(tl.cdiv(N_KEYS, K_TILE_SIZE)):
-        K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero") # (K_TILE_SIZE, D)
-        V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero") # (K_TILE_SIZE, D)
+        K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32) # (K_TILE_SIZE, D)
+        V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32) # (K_TILE_SIZE, D)
 
         S_ij = tl.dot(Q_i, tl.trans(K_j)) * scale # (Q_TILE_SIZE, K_TILE_SIZE)
 
@@ -102,7 +105,7 @@ def flash_fwd_kernel(
             # k_global > q_global gives diagonal=1 mask
             mask = k_global[None, :] > q_global[:, None] 
 
-            mask_stable = tl.full((Q_TILE_SIZE, K_TILE_SIZE), float(1e-6), dtype=tl.float32)
+            mask_stable = tl.full((Q_TILE_SIZE, K_TILE_SIZE), float(1e-6), dtype=dtype)
 
             S_ij = tl.where(mask, -float("inf"), S_ij)
             S_ij += mask_stable
@@ -125,8 +128,9 @@ def flash_fwd_kernel(
         m_i_prev = m_ij
 
 
-    O_i = (1 / l_i_prev)[:, None] *  O_i_prev
-    L_i = m_i_prev + tl.log(l_i_prev)
+    # Cast the stored info back to orginal type
+    O_i = ((1 / l_i_prev)[:, None] * O_i_prev).to(dtype)
+    L_i = (m_i_prev + tl.log(l_i_prev)).to(dtype)
 
     tl.store(O_block_ptr, O_i, boundary_check=(0, 1))
     tl.store(L_block_ptr, L_i, boundary_check=(0, ))
@@ -197,10 +201,16 @@ def flash_bwd_kernel(
         order=(1, 0)
     ) # (K_TILE_SIZE, D)
 
-    dK_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
-    dV_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
+    
     K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
     V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
+
+    # Cast to fp32 when doing calculation
+    K_j = K_j.to(tl.float32)
+    V_j = V_j.to(tl.float32)
+
+    dK_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
+    dV_j = tl.zeros((K_TILE_SIZE, D_dim), dtype=tl.float32) # (K_TILE_SIZE, D)
 
     
     for i in range(tl.cdiv(N_QUERIES, Q_TILE_SIZE)):
@@ -258,11 +268,11 @@ def flash_bwd_kernel(
             order=(0, ),
         ) # (N_QUERIES, )
 
-        Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
-        O_i = tl.load(O_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
-        dO_i = tl.load(dO_block_ptr, boundary_check=(0, 1), padding_option="zero") # (Q_TILE_SIZE, D)
-        L_i = tl.load(L_block_ptr, boundary_check=(0, ), padding_option="zero") # (Q_TILE_SIZE, )
-        D_i = tl.load(D_block_ptr, boundary_check=(0, ), padding_option="zero") # (Q_TILE_SIZE, )
+        Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32) # (Q_TILE_SIZE, D)
+        O_i = tl.load(O_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32) # (Q_TILE_SIZE, D)
+        dO_i = tl.load(dO_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32) # (Q_TILE_SIZE, D)
+        L_i = tl.load(L_block_ptr, boundary_check=(0, ), padding_option="zero").to(tl.float32) # (Q_TILE_SIZE, )
+        D_i = tl.load(D_block_ptr, boundary_check=(0, ), padding_option="zero").to(tl.float32) # (Q_TILE_SIZE, )
 
         S_ij = tl.dot(Q_i, tl.trans(K_j)) * scale # (Q_TILE_SIZE, K_TILE_SIZE)
 
@@ -303,6 +313,7 @@ def flash_bwd_kernel(
         q_mask = q_offsets < N_QUERIES
         d_mask = d_offsets < D_dim
         mask = q_mask[:, None] & d_mask[None, :]
+
         dQ_update = tl.dot(dS_ij, K_j)
 
         tl.atomic_add(dQ_ptrs, dQ_update, mask=mask)
@@ -344,16 +355,18 @@ class FlashAttentionTriton(torch.autograd.Function):
 
         scale = 1/ (D ** 0.5)
 
+        dtype = Q.dtype
+
         # Make O and L for output
         O = torch.empty(
             size=(q_batch, N_QUERIES, D),
-            dtype=torch.float32,
+            dtype=dtype,
             device=device
         )
 
         L = torch.empty(
             size=(q_batch, N_QUERIES, ),
-            dtype=torch.float32,
+            dtype=dtype,
             device=device
         )
 
@@ -388,12 +401,14 @@ class FlashAttentionTriton(torch.autograd.Function):
         q_batch, N_QUERIES, Dk = Q.shape
         k_batch, N_KEYS, Dk = K.shape
 
+        dtype = Q.dtype
+
         scale = 1 / (Dk ** 0.5)
 
         D = torch.sum(dO * O, dim=-1) # (B, N_QUERIES) 
-        dQ = torch.zeros_like(Q) # (B, N_QUERIES, D)
-        dK = torch.zeros_like(K) # (B, N_KEYS, D)
-        dV = torch.zeros_like(V) # (B, N_KEYS, D)
+        dQ = torch.zeros_like(Q, dtype=torch.float32) # (B, N_QUERIES, D)
+        dK = torch.zeros_like(K, dtype=torch.float32) # (B, N_KEYS, D)
+        dV = torch.zeros_like(V, dtype=torch.float32) # (B, N_KEYS, D)
 
         flash_bwd_kernel[triton.cdiv(N_KEYS, K_TILE_SIZE), q_batch](
             Q, K, V,
@@ -418,7 +433,7 @@ class FlashAttentionTriton(torch.autograd.Function):
             is_causal=ctx.is_causal
         )
 
-        return dQ, dK, dV, None
+        return dQ.to(dtype), dK.to(dtype), dV.to(dtype), None
 
 
 
