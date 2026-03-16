@@ -2,8 +2,8 @@ uv run python -m cs336_systems.benchmark \
     --device cuda \
     --dtype float16 \
     --size 2.7B \
-    --batch 4 \
     --use_compile \
+    --batch 4 \
     --seq_len 128 \
     --d_model 2560 \
     --d_ff 10240 \

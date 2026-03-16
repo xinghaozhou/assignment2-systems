@@ -9,6 +9,8 @@ from cs336_basics.model import BasicsTransformerLM
 
 from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
+from cs336_systems.FlashAttention_pytorch import FlashAttentionPytorch
+from cs336_systems.FlashAttention_triton import FlashAttentionTriton
 
 import torch.cuda.nvtx as nvtx
 
@@ -35,6 +37,7 @@ parser.add_argument("--num_heads", help="number of heads", type=int)
 parser.add_argument("--warmup_steps", help="steps before start measuring time", type=int)
 parser.add_argument("--pass_type", help="Type of passes when measuring time (e.g. forward)", type=str)
 parser.add_argument("--test_steps", help="steps when start measuring time", type=int)
+
 
 args = parser.parse_args()
 
@@ -63,6 +66,7 @@ def annotated_scaled_dot_product_attention(
        output = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
 
     return output
+
    
 import cs336_basics.model
 cs336_basics.model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
