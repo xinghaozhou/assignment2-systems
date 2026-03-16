@@ -17,7 +17,7 @@ import triton
 
 parser = argparse.ArgumentParser()
  
-parser.add_argument("--device", help="device", default='mps', type=str)
+parser.add_argument("--device", help="device", default='cuda', type=str)
 parser.add_argument("--dtype", help="dtype", type=str)
 
 # use this as bool args
@@ -34,7 +34,7 @@ args = parser.parse_args()
 def bench_forward(
     fn, Q, K, V, mask
 ):
-    return triton.testing.do_bench(lambda: fn.apply(Q, K, V, mask=mask))
+    return triton.testing.do_bench(lambda: fn.apply(Q, K, V, mask))
 
 def bench_backward(
     fn, Q, K, V, mask
@@ -57,7 +57,7 @@ def bench_end_to_end(
         Q.grad = None
         K.grad = None
         V.grad = None
-        o = fn.apply(Q, K, V, mask=mask)
+        o = fn.apply(Q, K, V, mask)
         loss = o.sum()
         loss.backward()
     return triton.testing.do_bench(run)
@@ -86,19 +86,27 @@ def main():
     
     if not args.use_triton: 
         if args.test_type == "forward":
-            bench_forward(FlashAttentionPytorch, Q, K, V, mask=True)
+            latency = bench_forward(FlashAttentionPytorch, Q, K, V, mask=True)
         elif args.test_type == "backward":
-            bench_backward(FlashAttentionPytorch, Q, K, V, mask=True)
+            latency = bench_backward(FlashAttentionPytorch, Q, K, V, mask=True)
         elif args.test_type == "end_to_end":
-            bench_end_to_end(FlashAttentionPytorch, Q, K, V, mask=True)
+            latency = bench_end_to_end(FlashAttentionPytorch, Q, K, V, mask=True)
+        else:
+            raise TypeError(f"Invavlid test_type {args.test_type}.")
     else:
         if args.test_type == "forward":
-            bench_forward(FlashAttentionTriton, Q, K, V, mask=True)
+            latency = bench_forward(FlashAttentionTriton, Q, K, V, mask=True)
         elif args.test_type == "backward":
-            bench_backward(FlashAttentionTriton, Q, K, V, mask=True)
+            latency = bench_backward(FlashAttentionTriton, Q, K, V, mask=True)
         elif args.test_type == "end_to_end":
-            bench_end_to_end(FlashAttentionTriton, Q, K, V, mask=True)
+            latency = bench_end_to_end(FlashAttentionTriton, Q, K, V, mask=True)
+        else:
+            raise TypeError(f"Invavlid test_type {args.test_type}.")
+
+    print(f"{args.test_type} Latency is {(latency):.2f} ms")
+    
 
 
         
-    
+if __name__ == "__main__":
+    main()

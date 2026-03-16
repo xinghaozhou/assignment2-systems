@@ -124,6 +124,7 @@ class FlashAttentionPytorch(torch.autograd.Function):
         B, N_KEYS, d = K.shape
 
         dtype = Q.dtype
+        device = Q.device
 
         Bq = 16
         Bk = 16
@@ -133,9 +134,9 @@ class FlashAttentionPytorch(torch.autograd.Function):
 
         # only need to store D, L 
         D = torch.sum(dO * O, dim=-1) # (B, N_QUERIES) 
-        dQ = torch.zeros_like(Q) # (B, N_QUERIES, D)
-        dK = torch.zeros_like(K) # (B, N_KEYS, D)
-        dV = torch.zeros_like(V) # (B, N_KEYS, D)
+        dQ = torch.zeros_like(Q, device=Q.device) # (B, N_QUERIES, D)
+        dK = torch.zeros_like(K, device=Q.device) # (B, N_KEYS, D)
+        dV = torch.zeros_like(V, device=Q.device) # (B, N_KEYS, D)
         
         for j in range(1, Tk+1):
             start_k = (j-1) * Bk
@@ -144,8 +145,8 @@ class FlashAttentionPytorch(torch.autograd.Function):
             K_j = K[..., start_k:end_k, :] # (B, K_TILE_SIZE, D)
             V_j = V[..., start_k:end_k, :] # (B, K_TILE_SIZE, D)
 
-            dK_j = torch.zeros((B, Bk, d), dtype=dtype)
-            dV_j = torch.zeros((B, Bk, d), dtype=dtype)
+            dK_j = torch.zeros((B, Bk, d), dtype=dtype, device=device)
+            dV_j = torch.zeros((B, Bk, d), dtype=dtype, device=device)
 
             for i in range(1, Tq+1):
                 start_q = (i-1) * Bq

@@ -135,10 +135,6 @@ def flash_fwd_kernel(
     tl.store(O_block_ptr, O_i, boundary_check=(0, 1))
     tl.store(L_block_ptr, L_i, boundary_check=(0, ))
 
-    Q_block_ptr = Q_block_ptr.advance((Q_TILE_SIZE, 0))
-    O_block_ptr = O_block_ptr.advance((Q_TILE_SIZE, 0))
-    L_block_ptr = L_block_ptr.advance((Q_TILE_SIZE, 0))    
-
 @triton.jit
 def flash_bwd_kernel(
     Q_ptr, K_ptr, V_ptr,
