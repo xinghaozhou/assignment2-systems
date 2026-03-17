@@ -14,7 +14,7 @@ do
                 --test_type $test_type \
                 --batch 1 \
                 --d_model $D_MODEL \
-                --seq_len $SEQ_LEN \
+                --seq_len $SEQ_LEN
 
             uv run python -m cs336_systems.benchmark_flash_attn \
                 --device cuda \
@@ -22,8 +22,9 @@ do
                 --test_type $test_type \
                 --batch 1 \
                 --d_model $D_MODEL \
-                --seq_len $SEQ_LEN \
+                --seq_len $SEQ_LEN
 
+        done
     done
 done
 

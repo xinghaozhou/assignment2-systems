@@ -3,13 +3,16 @@ import numpy as np
 import torch 
 import timeit
 import statistics
+import math
+import einx
+from einops import einsum
+
 
 from contextlib import nullcontext
 from cs336_basics.model import BasicsTransformerLM
 
 from cs336_basics.optimizer import AdamW
-from cs336_basics.nn_utils import cross_entropy
-from cs336_systems.FlashAttention_pytorch import FlashAttentionPytorch
+from cs336_basics.nn_utils import softmax
 from cs336_systems.FlashAttention_triton import FlashAttentionTriton
 
 import torch.cuda.nvtx as nvtx
@@ -31,19 +34,24 @@ parser.add_argument("--d_model", help="dimension size", type=int)
 
 args = parser.parse_args()
 
+def call_fn(fn, Q, K, V, mask):
+    # Triton: autograd.Function
+    if hasattr(fn, "apply"):
+        return fn.apply(Q, K, V, mask)
+    else:
+        return fn(Q, K, V, mask)
+
 def bench_forward(
     fn, Q, K, V, mask
 ):
-    return triton.testing.do_bench(lambda: fn.apply(Q, K, V, mask))
+    return triton.testing.do_bench(lambda: call_fn(fn, Q, K, V, mask), warmup=10)
 
-def bench_backward(
-    fn, Q, K, V, mask
-):
+def bench_backward(fn, Q, K, V, mask):
     Q_ = Q.detach().clone().requires_grad_(True)
     K_ = K.detach().clone().requires_grad_(True)
     V_ = V.detach().clone().requires_grad_(True)
 
-    out = fn.apply(Q_, K_, V_, mask)
+    out = call_fn(fn, Q_, K_, V_, mask)
     grad = torch.randn_like(out)
 
     def run():
@@ -53,23 +61,38 @@ def bench_backward(
 
         out.backward(grad, retain_graph=True)
 
-    return triton.testing.do_bench(run)
+    return triton.testing.do_bench(run, warmup=10)
 
-def bench_end_to_end(
-    fn, Q, K, V, mask
-):
+def bench_end_to_end(fn, Q, K, V, mask):
     def run():
         Q_ = Q.detach().clone().requires_grad_(True)
         K_ = K.detach().clone().requires_grad_(True)
         V_ = V.detach().clone().requires_grad_(True)
 
-        out = fn.apply(Q_, K_, V_, mask)
+        out = call_fn(fn, Q_, K_, V_, mask)
         grad = torch.ones_like(out)
 
         out.backward(grad)
 
-    return triton.testing.do_bench(run)
+    return triton.testing.do_bench(run, warmup=10)
    
+def regular_pytorch_implementation(Q, K, V, mask):        
+    d_k = Q.shape[-1]
+    attention_scores = einsum(Q, K, "... query d_k, ... key d_k -> ... query key") / math.sqrt(d_k)
+
+    if mask:
+        mask_tensor = torch.triu(
+            torch.ones((attention_scores.size(-2), attention_scores.size(-1)), device=attention_scores.device),
+            diagonal=1
+        ) == 0   
+
+        attention_scores = attention_scores.masked_fill(~mask_tensor, float("-inf")) # Do masking first, Put -inf for those ~mask (True mask)
+
+    attention_weights = softmax(attention_scores, dim=-1)  # Softmax over the key dimension
+
+    output = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
+    return output
+
 
 
 def main():
@@ -94,11 +117,11 @@ def main():
     
     if not args.use_triton: 
         if args.test_type == "forward":
-            latency = bench_forward(FlashAttentionPytorch, Q, K, V, mask=True)
+            latency = bench_forward(regular_pytorch_implementation, Q, K, V, mask=True)
         elif args.test_type == "backward":
-            latency = bench_backward(FlashAttentionPytorch, Q, K, V, mask=True)
+            latency = bench_backward(regular_pytorch_implementation, Q, K, V, mask=True)
         elif args.test_type == "end_to_end":
-            latency = bench_end_to_end(FlashAttentionPytorch, Q, K, V, mask=True)
+            latency = bench_end_to_end(regular_pytorch_implementation, Q, K, V, mask=True)
         else:
             raise TypeError(f"Invavlid test_type {args.test_type}.")
     else:
@@ -112,8 +135,6 @@ def main():
             raise TypeError(f"Invavlid test_type {args.test_type}.")
 
     print(f"{args.test_type} Latency is {(latency):.2f} ms")
-    
-
 
         
 if __name__ == "__main__":
