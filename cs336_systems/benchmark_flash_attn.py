@@ -39,13 +39,18 @@ def bench_forward(
 def bench_backward(
     fn, Q, K, V, mask
 ):
-    out = fn.apply(Q, K, V, mask)
+    Q_ = Q.detach().clone().requires_grad_(True)
+    K_ = K.detach().clone().requires_grad_(True)
+    V_ = V.detach().clone().requires_grad_(True)
+
+    out = fn.apply(Q_, K_, V_, mask)
     grad = torch.randn_like(out)
 
     def run():
-        Q.grad = None
-        K.grad = None
-        V.grad = None
+        Q_.grad = None
+        K_.grad = None
+        V_.grad = None
+
         out.backward(grad, retain_graph=True)
 
     return triton.testing.do_bench(run)
@@ -54,12 +59,15 @@ def bench_end_to_end(
     fn, Q, K, V, mask
 ):
     def run():
-        Q.grad = None
-        K.grad = None
-        V.grad = None
-        o = fn.apply(Q, K, V, mask)
-        loss = o.sum()
-        loss.backward()
+        Q_ = Q.detach().clone().requires_grad_(True)
+        K_ = K.detach().clone().requires_grad_(True)
+        V_ = V.detach().clone().requires_grad_(True)
+
+        out = fn.apply(Q_, K_, V_, mask)
+        grad = torch.ones_like(out)
+
+        out.backward(grad)
+
     return triton.testing.do_bench(run)
    
 
