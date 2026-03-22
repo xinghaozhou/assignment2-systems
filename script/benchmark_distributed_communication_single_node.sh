@@ -5,10 +5,10 @@ do
     do
         for backend in nccl
         do
-            uv run python -m cs336_systems.distributed_communication_single_node \
+            python -m cs336_systems.distributed_communication_single_node \
                 --backend $backend \
                 --num_processes $num_processes \
-                --length $length \
+                --length $length 
 
         done
     done

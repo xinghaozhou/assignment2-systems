@@ -23,6 +23,8 @@ def setup(rank, world_size):
 def distributed_demo(rank, args, world_size):
     setup(rank, world_size)
 
+    dist.barrier()
+
     if args.backend == "nccl":
         torch.cuda.set_device(rank)
         device = torch.device(f"cuda:{rank}")
@@ -38,7 +40,8 @@ def distributed_demo(rank, args, world_size):
         torch.cuda.synchronize()
         end = timeit.default_timer()
 
-    print(f"{args.backend} with {world_size} process for {args.length * 4 / (1024**2)}MB takes {((end - start)*1000):.2f} ms" )
+    if rank == 0: # only ask one device to print
+        print(f"{args.backend} with {world_size} process for {args.length * 4 / (1024**2)}MB takes {((end - start)*1000):.2f} ms" )
 
 
 def main(args):
