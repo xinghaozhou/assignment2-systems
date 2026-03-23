@@ -14,19 +14,28 @@ parser.add_argument("--length", help="", type=int)
 args = parser.parse_args()
 
 
-def setup(rank, world_size):
+def setup(rank, world_size, backend):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "29500"
 
-    dist.init_process_group(args.backend, rank=rank, world_size=world_size)
+    if backend == "nccl":
+        torch.cuda.set_device(rank)
+        dist.init_process_group(
+            backend="nccl",
+            rank=rank,
+            world_size=world_size,
+        )
+    elif backend == "gloo":
+        dist.init_process_group(
+            backend="gloo",
+            rank=rank,
+            world_size=world_size,
+        )
 
 def distributed_demo(rank, args, world_size):
-    setup(rank, world_size)
-
-    dist.barrier()
+    setup(rank, world_size, args.backend)
 
     if args.backend == "nccl":
-        torch.cuda.set_device(rank)
         device = torch.device(f"cuda:{rank}")
         data = torch.randint(0, 10, (args.length,), device=device)
 

@@ -5,7 +5,7 @@ do
     do
         for backend in nccl
         do
-            python -m cs336_systems.distributed_communication_single_node \
+            uv run python -m cs336_systems.distributed_communication_single_node \
                 --backend $backend \
                 --num_processes $num_processes \
                 --length $length 
