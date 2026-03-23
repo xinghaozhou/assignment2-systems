@@ -37,17 +37,22 @@ def distributed_demo(rank, args, world_size):
 
     if args.backend == "nccl":
         device = torch.device(f"cuda:{rank}")
-        data = torch.randint(0, 10, (args.length,), device=device)
+
+    elif args.backend == "gloo":
+        device = torch.device("cpu")
+       
+    data = torch.randint(0, 10, (args.length,), device=device)
+
 
     if args.backend == "nccl":
         torch.cuda.synchronize()
-        start = timeit.default_timer()
+    start = timeit.default_timer()
 
     dist.all_reduce(data, async_op=False)
 
     if args.backend == "nccl":
         torch.cuda.synchronize()
-        end = timeit.default_timer()
+    end = timeit.default_timer()
 
     if rank == 0: # only ask one device to print
         print(f"{args.backend} with {world_size} process for {args.length * 4 / (1024**2)}MB takes {((end - start)*1000):.2f} ms" )
