@@ -72,7 +72,7 @@ def ddp_demo(rank, world_size, args):
     end = timeit.default_timer()
 
     if rank == 1:
-        print(f"Total time for iterations is {((end - start) * 1000):.2f} ms. Total time for communication is {((naive_ddp.get_comm_time()) * 1000):.2f} ms.")
+        print(f"Total time for iterations is {((end - start) * 1000):.2f} ms. Total time for communication is {((flat_ddp.get_comm_time()) * 1000):.2f} ms.")
 
     dist.destroy_process_group()
 

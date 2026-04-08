@@ -11,7 +11,7 @@
 #     --num_heads 25\
 #     --d_ff 6400\
 
-uv run python -m cs336_systems.benchmark_flat_ddp \
+uv run python -m cs336_systems.benchmark_overlap_ddp \
     --world_size 2 \
     --num_iters 10\
     --batch_size 4 \

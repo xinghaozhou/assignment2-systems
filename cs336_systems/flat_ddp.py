@@ -26,10 +26,14 @@ class FlatDDP(nn.Module):
             dist.broadcast(p.data, src=0)
         
     def finish_grad_synchronization(self):
+        comm_params = []
         comm_grads = []
         for p in self.module.parameters():
             if p.requires_grad and p.grad is not None:
-                p.grad = p.grad.contiguous() # Make sure it is contiguous
+
+                p.grad = p.grad.contiguous() if not p.grad.is_contiguous() else p.grad# Make sure it is contiguous
+
+                comm_params.append(p)
                 comm_grads.append(p.grad)
             
         flatten_comm_tensor = torch._utils._flatten_dense_tensors(comm_grads)
@@ -39,15 +43,15 @@ class FlatDDP(nn.Module):
 
         dist.all_reduce(flatten_comm_tensor)
 
+        torch.cuda.synchronize()
+        end = timeit.default_timer()
+
         flatten_comm_tensor = flatten_comm_tensor / self.world_size
         unflatten_comm_tensor = torch._utils._unflatten_dense_tensors(flatten_comm_tensor, comm_grads)
 
-        for p, grad in zip(self.module.parameters(), unflatten_comm_tensor):
+        for p, grad in zip(comm_params, unflatten_comm_tensor):
             if p.requires_grad and p.grad is not None:
-                p.grad = grad
-
-        torch.cuda.synchronize()
-        end = timeit.default_timer()
+                p.grad.copy_(grad)
 
         self.comm_time += (end - start)
 

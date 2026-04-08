@@ -8,7 +8,7 @@ import torch.nn as nn
 from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
 from cs336_basics.model import BasicsTransformerLM
-from cs336_systems.naive_ddp import NaiveDDP
+from cs336_systems.overlap_ddp_bucketed import OverlapDDPBucketed
 
 parser = argparse.ArgumentParser()
  
@@ -22,6 +22,8 @@ parser.add_argument("--d_model", help="dimension of model", type=int)
 parser.add_argument("--num_layers", help="num of layer", type=int)
 parser.add_argument("--num_heads", help="num of heads", type=int)
 parser.add_argument("--d_ff", help="dimension of ffn", type=int)
+
+parser.add_argument("--bucket_size_mb", help="size of the bucket", type=int)
 
 
 args = parser.parse_args()
@@ -47,7 +49,7 @@ def ddp_demo(rank, world_size, args):
     model = BasicsTransformerLM(args.vocab_size, args.context_length, args.d_model, args.num_layers, args.num_heads, args.d_ff, rope_theta=10000).to(device)
     optim = AdamW(model.parameters())
 
-    naive_ddp = NaiveDDP(model) # Wrap-up function, make it ready for communication
+    overlap_ddp_bucketed = OverlapDDPBucketed(model, args.bucket_size_mb) # Wrap-up function, make it ready for communication
 
     x = torch.randint(0, 10, size=(args.batch_size, args.context_length)).to(device)
     gt = torch.randint(0, 10, size=(args.batch_size, args.context_length)).to(device)
@@ -58,13 +60,14 @@ def ddp_demo(rank, world_size, args):
 
     for _ in range(args.num_iters):
         optim.zero_grad()
-        y = naive_ddp(x)
+        y = overlap_ddp_bucketed(x)
 
         loss = cross_entropy(y, gt)
 
-        with nvtx.range("backward"):
-            loss.backward()
+        loss.backward()
 
+        overlap_ddp_bucketed.finish_grad_synchronization()
+            
         optim.step()
 
     torch.cuda.synchronize()
@@ -72,7 +75,7 @@ def ddp_demo(rank, world_size, args):
     end = timeit.default_timer()
 
     if rank == 1:
-        print(f"Total time for iterations is {((end - start) * 1000):.2f} ms. Total time for communication is {((naive_ddp.get_comm_time()) * 1000):.2f} ms.")
+        print(f"Total time for iterations is {((end - start) * 1000):.2f} ms. Total time for communication is {((overlap_ddp_bucketed.get_comm_time()) * 1000):.2f} ms.")
 
     dist.destroy_process_group()
 

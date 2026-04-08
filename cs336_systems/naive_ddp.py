@@ -40,11 +40,14 @@ class NaiveDDP(nn.Module):
             start = timeit.default_timer()
 
             grad = grad.contiguous()
+
+            torch.cuda.synchronize()
             dist.all_reduce(grad, async_op=False)
 
+            torch.cuda.synchronize()
+            end = timeit.default_timer()
             grad = grad / self.world_size
 
-            end = timeit.default_timer()
             self.comm_time += (end - start)
             return grad
         return hook
